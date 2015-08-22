@@ -1,0 +1,141 @@
+---
+title: "Quantified Self Movement Data Analysis Report"
+output: html_document
+---
+```{r, echo=FALSE, warning =FALSE, message=FALSE }
+library(caret)
+library(dplyr)
+library(rpart)
+library(kernlab)
+library(reshape2)
+library(knitr)
+
+set.seed(8675309)
+
+```
+##Practical Machine Learning Project
+
+##Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+
+##Getting and cleaning data
+After loading the corresponding CSV files, we'll remove unnecessary columns from the data set. These are columns that are either empty or are not relevant for trainnig a model (user name, timestamp).
+
+```{r, warning =FALSE, message=FALSE }
+strings.na <- c("NA","#DIV/0!","")
+training <- read.csv("pml-training.csv", na.strings=strings.na)
+testing <- read.csv("pml-testing.csv", na.strings=strings.na)
+
+# Remove unnecesary columns
+cols.to.remove <- grepl("^X|timestamp|window|user_name", names(training)) #Select which columns to remove
+training  <- training[, !cols.to.remove] #Removed identified columns
+training <- training[, colSums(is.na(training)) == 0]  #Remove columns with N/A
+
+```
+
+##Partition the data
+Now, we will split the data and take 70% as the training set, 30% as the test set.
+```{r, warning =FALSE, message=FALSE}
+inTrain <- createDataPartition(y=training$classe, p=0.70, list=FALSE)
+
+training.set <- training[inTrain,]
+testing.set <- training[-inTrain,]
+
+```
+
+##Fitting the model
+We will use a Random Forest approach to fit the predicive model. This algorithm is characterized by a subset of features, selected in a random and independent manner with the same distribution for each of the trees in the forest. We will use a 10-fold cross validation.
+
+```{r, eval=FALSE, warning =FALSE, message=FALSE }
+  #Fit a random forest
+    randomForest.model <- train(classe ~ ., 
+                          data=training.set, 
+                          method="rf", 
+                          importance= TRUE,
+                          trControl = trainControl(method = "cv", 10))
+```
+
+```{r, echo=FALSE, warning =FALSE, message=FALSE }
+    randomForest.model <- readRDS("randomForest-final-model.rds")
+```
+
+###Training set
+We'll do a prediction using the training set in order to evaluate the model's accuracy as well as the in sample errors.
+```{r, warning =FALSE, message=FALSE }
+    
+  randomForest.predict.train <- predict(randomForest.model, newdata = training.set)
+  randomForest.train.confusionMatrix <- confusionMatrix(data=randomForest.predict.train,  training.set$classe)
+  randomForest.train.confusionMatrix$overall
+```
+
+```{r, echo=FALSE, warning =FALSE, message=FALSE }
+  randomForest.train.performance  <- data.frame(model = "Training set",
+                                                accuracy = randomForest.train.confusionMatrix$overall[1],
+                                       accuracyLower = randomForest.train.confusionMatrix$overall[3],
+                                       accuracyUpper = randomForest.train.confusionMatrix$overall[4])
+```
+
+###Test set
+Then we'll do a prediction using the testing set to get the model's out of sample errors and accuracy.
+```{r, warning =FALSE, message=FALSE }
+    
+  randomForest.predict.test <- predict(randomForest.model, newdata = testing.set)
+  randomForest.test.confusionMatrix <- confusionMatrix(data=randomForest.predict.test,  testing.set$classe)
+  randomForest.test.confusionMatrix$overall
+```
+
+###Test set confusion matrix
+```{r kable,  echo=FALSE, fig.height=4, fig.width=10}
+  kable(randomForest.test.confusionMatrix$table)
+
+  
+```
+
+##Model information
+Our selected model has an out of sample error (generalization error) of 0.58% with an accuracy of 99.42%.
+
+We will now plot the variable importance. For each variable in our model it tells us how important that variable is in classifying the data with the mean decrease accuracy which measures how much inclusion of this predictor in the model reduces classification error.
+
+<center>
+```{r, echo=FALSE, warning =FALSE, message=FALSE, fig.height=8}
+
+  #Get the variable importance from the model and melt the data frame for plotting
+  importance.df <- as.data.frame(importance(randomForest.model$finalModel))
+  importance.df$variable <- rownames(importance.df)
+  importance.df.melt  <- melt(importance.df, 
+                              id.vars = c('variable'), 
+                              variable.name = 'class', 
+                              measure.vars= c('A', 'B','C','D','E'))
+
+
+  #Variable importance plot
+  ggplot(importance.df, aes(x=MeanDecreaseAccuracy, y=variable)) +
+  geom_point(size=4) + # Use a larger dot 
+  geom_segment(aes(yend=variable), xend=6, colour="grey50") +
+  theme_grey() +
+  ggtitle(expression(atop("Variable Importance"))) +
+  labs( x="Mean decrease in accuracy", y="Predictor") +  
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.background = element_rect(fill="white", colour = "black"),
+        panel.grid.major.y = element_line(linetype="dashed")) +
+  theme(title=element_text(size=18,face="bold"), 
+        axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold"))    
+  
+  #Variable importance plot by class
+  ggplot(importance.df.melt, aes(x=value, y=variable, group=variable, colour=class)) +
+  geom_point(size=3) + 
+  ggtitle(expression(atop("Variable Importance by Class"))) +
+  labs( x="Mean decrease in accuracy", y="Predictor") +
+  theme(axis.text.y = element_text(lineheight = 13, color="black")) +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(linetype="dashed")) + 
+  theme(title=element_text(size=18,face="bold"), 
+        axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold"))        
+
+```
+</center>
